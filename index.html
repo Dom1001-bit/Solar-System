@@ -2,130 +2,143 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Solar System Explorer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Solar System Explorer - Troubleshooting</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
       overflow: hidden;
-      background: black;
+      background: black; /* Fallback background */
     }
     #info {
       position: absolute;
       top: 10px;
       left: 10px;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.7);
       color: white;
       padding: 10px;
       border-radius: 8px;
-      z-index: 1;
+      z-index: 100;
+      font-family: Arial, sans-serif;
+    }
+    #loading-message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 20px;
+      font-family: Arial, sans-serif;
+      z-index: 101;
+    }
+    canvas {
+        display: block; /* Prevents scrollbars */
     }
   </style>
 </head>
 <body>
-<div id="info">Click a planet to zoom in! 🌎🌟</div>
+<div id="info">Click a planet to zoom in! 🌎🌟 (Placeholder Textures Active)</div>
+<div id="loading-message">Loading Solar System...</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"
+        onerror="console.error('CRITICAL: OrbitControls.js script FAILED TO LOAD from CDN. Check network and CDN link.')"></script>
 
 <script>
-// Scene Setup
-const scene = new THREE.Scene();
+// Declare variables that will be used across functions in a broader scope
+let scene, camera, renderer, controls, loader, sun, comet;
+let planetMeshes = []; // Initialize as an empty array
+let raycaster, mouse, targetPlanet = null, clock;
 
-// Camera Setup
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
-camera.position.set(0, 200, 600);
+const loadingMessage = document.getElementById('loading-message');
 
-// Renderer Setup
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
-
-// Orbit Controls
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-
-// Background Stars
-const loader = new THREE.TextureLoader();
-loader.load('textures/stars.jpg', function(texture) {
-  scene.background = texture;
-});
-
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
-scene.add(ambientLight);
-
-const sunLight = new THREE.PointLight(0xffffff, 2, 0);
-scene.add(sunLight);
-
-// Sun
-const sunGeometry = new THREE.SphereGeometry(30, 64, 64);
-const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-const sun = new THREE.Mesh(sunGeometry, sunMaterial);
-scene.add(sun);
-
-// Planets Data
+// Planets Data (can remain constant)
 const planetsData = [
-  { name: 'Mercury', size: 2, distance: 50, speed: 0.04, texture: 'textures/mercury.jpg' },
-  { name: 'Venus', size: 3, distance: 80, speed: 0.015, texture: 'textures/venus.jpg' },
-  { name: 'Earth', size: 3.5, distance: 110, speed: 0.01, texture: 'textures/earth.jpg', tilt: 23 },
-  { name: 'Mars', size: 2.8, distance: 140, speed: 0.008, texture: 'textures/mars.jpg' },
-  { name: 'Jupiter', size: 7, distance: 200, speed: 0.005, texture: 'textures/jupiter.jpg' },
-  { name: 'Saturn', size: 6, distance: 260, speed: 0.004, texture: 'textures/saturn.jpg' },
-  { name: 'Uranus', size: 5, distance: 320, speed: 0.003, texture: 'textures/uranus.jpg' },
-  { name: 'Neptune', size: 5, distance: 380, speed: 0.002, texture: 'textures/neptune.jpg' }
+  { name: 'Mercury', size: 2, distance: 50, speed: 0.04, texture: 'textures/mercury.jpg', color: '888888' },
+  { name: 'Venus', size: 3, distance: 80, speed: 0.015, texture: 'textures/venus.jpg', color: 'FAFAD2' },
+  { name: 'Earth', size: 3.5, distance: 110, speed: 0.01, texture: 'textures/earth.jpg', tilt: 0.4014, color: '4682B4' },
+  { name: 'Mars', size: 2.8, distance: 140, speed: 0.008, texture: 'textures/mars.jpg', color: 'FF7F50' },
+  { name: 'Jupiter', size: 7, distance: 200, speed: 0.005, texture: 'textures/jupiter.jpg', color: 'DEB887' },
+  { name: 'Saturn', size: 6, distance: 260, speed: 0.004, texture: 'textures/saturn.jpg', color: 'F0E68C', hasRing: true },
+  { name: 'Uranus', size: 5, distance: 320, speed: 0.003, texture: 'textures/uranus.jpg', color: 'AFEEEE' },
+  { name: 'Neptune', size: 5, distance: 380, speed: 0.002, texture: 'textures/neptune.jpg', color: '6495ED' }
 ];
 
-const planetMeshes = [];
+// Animation Loop
+function animate() {
+  requestAnimationFrame(animate);
+  // Ensure clock is initialized before calling getDelta()
+  if (!clock) return;
+  const delta = clock.getDelta(); 
 
-// Load Planets
-planetsData.forEach(data => {
-  const tex = loader.load(data.texture);
-  const mat = new THREE.MeshStandardMaterial({ map: tex });
-  const geo = new THREE.SphereGeometry(data.size, 32, 32);
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.userData = { ...data };
-  scene.add(mesh);
-  planetMeshes.push(mesh);
+  planetMeshes.forEach(planetMesh => {
+    const { speed, distance } = planetMesh.userData;
+    const effectiveSpeed = Number(speed) || 0.001;
+    const effectiveDistance = Number(distance) || 100;
 
-  // Orbit ring
-  const orbit = new THREE.RingGeometry(data.distance-0.5, data.distance+0.5, 64);
-  const orbitMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
-  const orbitMesh = new THREE.Mesh(orbit, orbitMat);
-  orbitMesh.rotation.x = Math.PI / 2;
-  scene.add(orbitMesh);
-});
+    const angle = (Date.now() * 0.00005 * effectiveSpeed * 360) % (2 * Math.PI) ;
+    planetMesh.position.set(
+        Math.cos(angle) * effectiveDistance,
+        0,
+        Math.sin(angle) * effectiveDistance
+    );
+    
+    planetMesh.rotation.y += 0.05 * delta; 
 
-// Asteroid Belt
-for (let i = 0; i < 500; i++) {
-  const asteroid = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5, 8, 8),
-    new THREE.MeshStandardMaterial({ color: 0x888888 })
-  );
-  const angle = Math.random() * Math.PI * 2;
-  const radius = 170 + Math.random() * 30;
-  asteroid.position.set(Math.cos(angle) * radius, (Math.random() - 0.5) * 10, Math.sin(angle) * radius);
-  scene.add(asteroid);
+    planetMesh.children.forEach(child => {
+        if (child.userData.isRing) {
+            // Ring is a child, so its position is relative.
+        }
+    });
+  });
+
+  if (comet) { 
+    comet.position.x += 25 * delta; 
+    comet.position.y += Math.sin(Date.now() * 0.0005) * 1; 
+    if (comet.position.x > 700) {
+      comet.position.x = -700;
+      comet.position.y = 50 + Math.random() * 100; 
+    }
+  }
+
+  if (targetPlanet && camera && controls && sun) { // Ensure all are defined
+    const targetPosition = new THREE.Vector3();
+    targetPlanet.getWorldPosition(targetPosition); 
+
+    const offset = new THREE.Vector3(0, targetPlanet.userData.size * 2, targetPlanet.userData.size * 5);
+    if (targetPlanet === sun) { 
+        offset.set(0, 100, 200); 
+    }
+    const desiredCameraPosition = targetPosition.clone().add(offset);
+
+    camera.position.lerp(desiredCameraPosition, 0.05); 
+    controls.target.lerp(targetPosition, 0.05); 
+
+    if (camera.position.distanceTo(desiredCameraPosition) < 1) {
+      document.getElementById('info').innerText = `Viewing ${targetPlanet.userData.name}. Click another planet or drag to explore.`;
+    }
+  }
+
+  if (controls) controls.update(delta); 
+  if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
-// Comet
-const comet = new THREE.Mesh(
-  new THREE.SphereGeometry(1, 16, 16),
-  new THREE.MeshBasicMaterial({ color: 0xffffff })
-);
-comet.position.set(-500, 50, 0);
-scene.add(comet);
+// Handle window resize
+function handleResize() {
+  if (camera && renderer) {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+}
 
-// Sound
-const bgMusic = new Audio('sounds/space_ambient_music.mp3');
-bgMusic.loop = true;
-bgMusic.volume = 0.3;
-document.body.addEventListener('click', () => { bgMusic.play(); }, { once: true });
+// Handle click events for zooming
+function handleClick(event) {
+  if (!controls || !mouse || !raycaster || !camera || !planetMeshes) return; // Ensure all are defined
+  if (controls.state !== -1 && controls.state !== THREE.MOUSE.ROTATE) return;
 
-// Raycaster for Click-to-Zoom
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-window.addEventListener('click', event => {
+
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(mouse, camera);
@@ -133,38 +146,200 @@ window.addEventListener('click', event => {
   const intersects = raycaster.intersectObjects(planetMeshes);
   if (intersects.length > 0) {
     const planet = intersects[0].object;
-    const { distance } = planet.userData;
-    camera.position.set(Math.cos(0) * (distance-10), 20, Math.sin(0) * (distance-10));
+    targetPlanet = planet; 
+    document.getElementById('info').innerText = `Zooming to ${planet.userData.name}...`;
   }
-});
-
-// Animation Loop
-function animate() {
-  requestAnimationFrame(animate);
-
-  planetMeshes.forEach(planet => {
-    const { speed, distance } = planet.userData;
-    const angle = Date.now() * 0.0001 * speed * 360;
-    planet.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
-    planet.rotation.y += 0.01;
-  });
-
-  // Comet movement
-  comet.position.x += 1;
-  comet.position.y += Math.sin(Date.now() * 0.001) * 2;
-  if (comet.position.x > 500) comet.position.x = -500;
-
-  controls.update();
-  renderer.render(scene, camera);
 }
-animate();
 
-// Handle window resize
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+// Main application setup function (formerly init)
+function setupApplication() {
+    console.log("Setting up application as THREE and OrbitControls are confirmed.");
+
+    // Scene Setup
+    scene = new THREE.Scene();
+
+    // Camera Setup
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
+    camera.position.set(0, 200, 600);
+
+    // Renderer Setup
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Orbit Controls - Assumed to be available here
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = false;
+    controls.minDistance = 50;
+    controls.maxDistance = 2000;
+    console.log("OrbitControls initialized successfully in setupApplication.");
+    
+    // Texture Loader
+    loader = new THREE.TextureLoader();
+
+    // Background
+    scene.background = new THREE.Color(0x000011); 
+    /*
+    loader.load(
+      'textures/stars.jpg', 
+      function(texture) { scene.background = texture; console.log("Star background loaded."); textureLoadedCallback(); },
+      undefined, 
+      function(err) { console.error('Error loading star background texture:', err); scene.background = new THREE.Color(0x000011); textureLoadedCallback(); }
+    );
+    */
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); 
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.PointLight(0xffffff, 2.5, 0, 1); 
+    sunLight.position.set(0, 0, 0); 
+    scene.add(sunLight);
+
+    // Sun
+    const sunGeometry = new THREE.SphereGeometry(30, 64, 64);
+    const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: false });
+    sun = new THREE.Mesh(sunGeometry, sunMaterial);
+    scene.add(sun);
+
+    // Planets
+    let texturesToLoadCount = planetsData.length; // Assuming solid background for now
+
+    function textureLoadedCallback() {
+        texturesToLoadCount--;
+        console.log(`Textures remaining for planets: ${texturesToLoadCount}`);
+        if (texturesToLoadCount === 0) {
+            console.log("All planet textures processed (or placeholders used).");
+            if (loadingMessage) loadingMessage.style.display = 'none';
+        }
+    }
+    
+    planetMeshes = []; // Clear planetMeshes before repopulating
+    planetsData.forEach(data => {
+      const placeholderTextureUrl = `https://placehold.co/256x256/${data.color}/white?text=${data.name}`;
+      const planetTexture = loader.load(
+        placeholderTextureUrl, 
+        function(tex) { console.log(`${data.name} texture loaded (or placeholder).`); textureLoadedCallback(); },
+        undefined,
+        function(err) { console.error(`Error loading texture for ${data.name}:`, err); textureLoadedCallback(); }
+      );
+
+      const mat = new THREE.MeshStandardMaterial({ map: planetTexture, roughness: 0.8, metalness: 0.2 });
+      const geo = new THREE.SphereGeometry(data.size, 32, 32);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.userData = { ...data }; 
+      if (data.tilt) mesh.rotation.z = data.tilt; 
+      scene.add(mesh);
+      planetMeshes.push(mesh);
+
+      const orbitGeometry = new THREE.RingGeometry(data.distance - 0.2, data.distance + 0.2, 64);
+      const orbitMaterial = new THREE.MeshBasicMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
+      const orbitMesh = new THREE.Mesh(orbitGeometry, orbitMaterial);
+      orbitMesh.rotation.x = Math.PI / 2;
+      scene.add(orbitMesh);
+
+      if (data.hasRing) {
+        const ringGeo = new THREE.RingGeometry(data.size * 1.2, data.size * 2.2, 64);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xaaaacc, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.userData.isRing = true; 
+        if (data.tilt) ringMesh.rotation.z = data.tilt;
+        ringMesh.rotation.x = Math.PI / 2 - 0.1; 
+        mesh.add(ringMesh); 
+      }
+    });
+    
+    if (texturesToLoadCount === 0 && loadingMessage) { 
+        loadingMessage.style.display = 'none';
+    }
+
+    // Asteroid Belt
+    const asteroidMaterial = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.9 });
+    for (let i = 0; i < 500; i++) {
+      const asteroidSize = 0.1 + Math.random() * 0.4;
+      const asteroidGeometry = new THREE.SphereGeometry(asteroidSize, 8, 8);
+      const asteroid = new THREE.Mesh(asteroidGeometry, asteroidMaterial);
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 165 + Math.random() * 20; 
+      const yOffset = (Math.random() - 0.5) * 10; 
+      asteroid.position.set(Math.cos(angle) * radius, yOffset, Math.sin(angle) * radius);
+      asteroid.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      scene.add(asteroid);
+    }
+
+    // Comet
+    const cometGeometry = new THREE.SphereGeometry(1, 16, 16);
+    const cometMaterial = new THREE.MeshBasicMaterial({ color: 0xffffee });
+    comet = new THREE.Mesh(cometGeometry, cometMaterial);
+    comet.position.set(-700, 100, 0); 
+    scene.add(comet);
+    
+    // Raycaster for Click-to-Zoom
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+    
+    // Event Listeners
+    window.addEventListener('click', handleClick);
+    window.addEventListener('resize', handleResize);
+
+    // Clock for animation
+    clock = new THREE.Clock();
+    
+    console.log("Solar System Initialization complete. Starting animation.");
+    animate(); 
+}
+
+// Initialization function with retries
+function tryInit(retries = 15, delay = 300) { // Slightly increased retries and delay
+    console.log(`tryInit attempt. Retries left: ${retries}. THREE defined: ${typeof THREE !== 'undefined'}`);
+    
+    if (typeof THREE === 'undefined') {
+        console.error("THREE.js is not loaded! Retrying...");
+        if (loadingMessage) loadingMessage.innerText = "Waiting for THREE.js...";
+        if (retries > 0) {
+            setTimeout(() => tryInit(retries - 1, delay), delay);
+        } else {
+            console.error("Fatal Error: THREE.js library failed to load after multiple retries.");
+            if (loadingMessage) loadingMessage.innerText = "Fatal Error: THREE.js failed to load.";
+        }
+        return;
+    }
+
+    // Log the THREE object itself to inspect its properties in the console
+    // This can be very verbose, so only log keys if OrbitControls is missing
+    // console.log('THREE object:', THREE); 
+
+    if (typeof THREE.OrbitControls === 'undefined') {
+        console.warn(`THREE.OrbitControls is undefined. Retrying in ${delay}ms...`);
+        // Log keys of THREE to see what IS available
+        if (THREE) {
+            console.log('Keys currently in THREE object:', Object.keys(THREE));
+        }
+        if (loadingMessage) loadingMessage.innerText = `Waiting for OrbitControls... (${retries})`;
+        if (retries > 0) {
+            setTimeout(() => tryInit(retries - 1, delay), delay);
+        } else {
+            console.error("Fatal Error: OrbitControls component failed to load after multiple retries. Check if OrbitControls.js loaded correctly (see network tab and console for script errors).");
+            if (loadingMessage) loadingMessage.innerText = "Fatal Error: OrbitControls failed to load. Please refresh.";
+        }
+        return;
+    }
+    
+    console.log("THREE and THREE.OrbitControls are loaded. Proceeding with setupApplication.");
+    if (loadingMessage) loadingMessage.innerText = "Initializing scene...";
+    setupApplication();
+}
+
+// Wait for the entire page to load, then try to initialize.
+window.addEventListener('load', () => {
+    console.log("Window loaded. Starting initialization checks for Solar System Explorer.");
+    tryInit();
 });
+
+console.log("Solar System Explorer script parsed. Waiting for window.load to initialize.");
+
 </script>
 </body>
 </html>
